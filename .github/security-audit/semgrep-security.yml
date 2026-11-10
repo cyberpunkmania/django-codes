@@ -1,0 +1,38 @@
+rules:
+  - id: python-shell-true
+    languages: [python]
+    severity: WARNING
+    message: Avoid shell interpretation. Pass an argument list and use shell=False.
+    metadata:
+      confidence: MEDIUM
+    patterns:
+      - pattern: subprocess.$F(..., shell=True, ...)
+      - metavariable-regex:
+          metavariable: $F
+          regex: '^(Popen|run|call|check_call|check_output)$'
+  - id: python-flask-debug
+    languages: [python]
+    severity: WARNING
+    message: Disable the Flask debugger in deployed services.
+    metadata:
+      confidence: MEDIUM
+    pattern: $APP.run(..., debug=True, ...)
+  - id: javascript-request-eval
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Replace eval of request data with explicit parsing and input validation.
+    metadata:
+      confidence: HIGH
+    pattern-either:
+      - pattern: eval(req.body.$FIELD)
+      - pattern: eval(req.query.$FIELD)
+      - pattern: eval(req.params.$FIELD)
+  - id: python-unsafe-yaml-loader
+    languages: [python]
+    severity: ERROR
+    message: Replace the unsafe YAML loader with yaml.safe_load for untrusted input.
+    metadata:
+      confidence: HIGH
+    pattern-either:
+      - pattern: yaml.unsafe_load(...)
+      - pattern: yaml.load(..., Loader=yaml.UnsafeLoader, ...)
