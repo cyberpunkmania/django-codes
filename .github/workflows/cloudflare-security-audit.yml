@@ -16,7 +16,16 @@ concurrency:
 
 jobs:
   audit:
-    name: Cloudflare Security Check
+    # A skipped push or manual job on another branch must never report the required context.
+    name: >-
+      ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' ||
+           github.ref_name == 'main' || github.ref_name == 'master' ||
+           github.ref_name == github.event.repository.default_branch)
+           && 'Cloudflare Security Check' || 'Security check outside protected branches' }}
+    if: >-
+      ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' ||
+          github.ref_name == 'main' || github.ref_name == 'master' ||
+          github.ref_name == github.event.repository.default_branch }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -47,7 +56,6 @@ jobs:
           PR_BASE: ${{ github.event.pull_request.base.sha }}
           MERGE_BASE: ${{ github.event.merge_group.base_sha }}
           PUSH_BEFORE: ${{ github.event.before }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -euo pipefail
           policy="$RUNNER_TEMP/security-policy"
@@ -55,14 +63,7 @@ jobs:
           case "$AUDIT_EVENT" in
             pull_request) base=$PR_BASE ;;
             merge_group) base=$MERGE_BASE ;;
-            push)
-              branch=${GITHUB_REF#refs/heads/}
-              case "$branch" in
-                main|master|"$DEFAULT_BRANCH") ;;
-                *) exit 0 ;;
-              esac
-              base=$PUSH_BEFORE
-              ;;
+            push) base=$PUSH_BEFORE ;;
             workflow_dispatch) base= ;;
             *) exit 2 ;;
           esac

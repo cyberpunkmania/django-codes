@@ -1,0 +1,80 @@
+name: Cloudflare Security Check
+
+on:
+  pull_request:
+  push:
+    branches: ['**']
+  merge_group:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-audit-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Cloudflare Security Check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-${{ runner.arch }}-security-audit-semgrep-1.182.0
+      - name: Install scanners
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m venv "$RUNNER_TEMP/security-venv"
+          "$RUNNER_TEMP/security-venv/bin/python" -m pip install --disable-pip-version-check semgrep==1.182.0
+          archive="$RUNNER_TEMP/gitleaks.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 -o "$archive" \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$archive" | sha256sum --check
+          tar -xzf "$archive" -C "$RUNNER_TEMP/security-venv/bin" gitleaks
+          echo "$RUNNER_TEMP/security-venv/bin" >> "$GITHUB_PATH"
+      - name: Scan changes
+        shell: bash
+        env:
+          AUDIT_EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          MERGE_BASE: ${{ github.event.merge_group.base_sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          policy="$RUNNER_TEMP/security-policy"
+          mkdir -- "$policy"
+          case "$AUDIT_EVENT" in
+            pull_request) base=$PR_BASE ;;
+            merge_group) base=$MERGE_BASE ;;
+            push)
+              branch=${GITHUB_REF#refs/heads/}
+              case "$branch" in
+                main|master|"$DEFAULT_BRANCH") ;;
+                *) exit 0 ;;
+              esac
+              base=$PUSH_BEFORE
+              ;;
+            workflow_dispatch) base= ;;
+            *) exit 2 ;;
+          esac
+          policy_ref=HEAD
+          if [[ $AUDIT_EVENT == pull_request || $AUDIT_EVENT == merge_group ]]; then
+            policy_ref=$base
+          fi
+          for file in security-audit-wrapper.sh semgrep-security.yml; do
+            git show "$policy_ref:.github/security-audit/$file" > "$policy/$file"
+          done
+          if [[ -z $base || $base =~ ^0+$ ]]; then
+            bash "$policy/security-audit-wrapper.sh" --full
+          else
+            bash "$policy/security-audit-wrapper.sh" --range "$base" HEAD
+          fi
